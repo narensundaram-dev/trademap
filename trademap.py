@@ -25,6 +25,11 @@ from selenium.webdriver.support.ui import Select, WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 
+__author__ = "Naren Sundaram"
+__email__ = "narensundaram007@gmail.com"
+__mobile__ = "+91 8678910063"
+
+
 TRADE_INDICATORS, Q_TIME_SERIES, COMPANIES = "ti", "qt", "cmp"
 REPORT_TYPES = {
     TRADE_INDICATORS: {
@@ -81,11 +86,8 @@ class TradeMapScraper:
         self.page_load_timeout = self.settings["page_load_timeout"]["value"]
     
     def get_dir_output(self):
-        if self.args.type in (TRADE_INDICATORS, Q_TIME_SERIES):
-            dirs = [TradeMapManager.dir_output, f"{self.product_id}-{self.country}"]
-        else:
-            dirs = [TradeMapManager.dir_output, f"{self.product_id}-{self.country}", "companies"]
-
+        label = REPORT_TYPES[self.args.type]["name"].lower().replace(" ", "-")
+        dirs = [TradeMapManager.dir_output, f"{self.product_id}-{self.country}", label]
         return os.path.join(*dirs)
 
 
@@ -192,10 +194,6 @@ class TradeMapScraper:
             )
             return self.chrome.find_element_by_id("ctl00_PageContent_MyGridView1")
 
-        def slugify_cmp_name(cmp_name):
-            cmp_name = cmp_name.replace(" ", "")
-            return re.sub(r"\W", "-", cmp_name)
-
         open_cmps_in_new_tab()
         table_cmps = set_max_paginate()
 
@@ -206,7 +204,6 @@ class TradeMapScraper:
             # Click the num element, sleep for 1s and close
             tr = table_cmps.find_elements_by_xpath(".//tr[@align='right']")[num]
             company = tr.find_element_by_tag_name("a")
-            print(f'Loading: "{company.text}" ...')
             company.click()
             set_max_paginate()
 

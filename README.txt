@@ -24,4 +24,4 @@ For help:
 
 
 Output:
-    - Stored in output/<product-id>-<country>/*.xls
+    - Stored in output/<product-id>-<country>/<report-type>/*.xls
