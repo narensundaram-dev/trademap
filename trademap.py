@@ -68,17 +68,27 @@ class DropDownLoaded:
 
 class TradeMapScraper:
 
-    def __init__(self, product_id, country, args, settings):
+    def __init__(self, count, product_id, country, args, settings):
+        self.count = count
         self.product_id = product_id
         self.country = country
         self.args = args
         self.settings = settings
 
         self.url = "https://www.trademap.org/Index.aspx"
-        self.dir_output = os.path.join(TradeMapManager.dir_output, f"{self.product_id}-{self.country}")
+        self.dir_output = self.get_dir_output()
         self.chrome = self.get_chrome_driver()
         self.page_load_timeout = self.settings["page_load_timeout"]["value"]
     
+    def get_dir_output(self):
+        if self.args.type in (TRADE_INDICATORS, Q_TIME_SERIES):
+            dirs = [TradeMapManager.dir_output, f"{self.product_id}-{self.country}"]
+        else:
+            dirs = [TradeMapManager.dir_output, f"{self.product_id}-{self.country}", "companies"]
+
+        return os.path.join(*dirs)
+
+
     def get_chrome_driver(self):
         chrome_options = webdriver.ChromeOptions()
         prefs = {"profile.default_content_settings.popups": 0,
@@ -154,38 +164,99 @@ class TradeMapScraper:
             seconds += 1
         return seconds
 
-    def download_xlsx(self):
+    def do_download_fa_cmps(self):
+        # Store main window
+        main_window = self.chrome.current_window_handle
 
-        def click_xlsx_icon():
+        # Open companies in new tab, Navigate to that new tab
+        def open_cmps_in_new_tab():
+            btn_companies = self.chrome.find_element_by_id("ctl00_PageContent_Button_Companies")
+            ActionChains(self.chrome).key_down(Keys.CONTROL).click(btn_companies).key_up(Keys.CONTROL).perform()
+            
+            while len(self.chrome.window_handles) > 1:
+                self.chrome.switch_to.window(self.chrome.window_handles[1])
+                break
+
+        # Set 300 per page
+        def set_max_paginate():
             WebDriverWait(self.chrome, self.page_load_timeout).until(
-            EC.presence_of_element_located((By.ID, "ctl00_PageContent_MyGridView1")))
-            self.chrome.find_element_by_id("ctl00_PageContent_GridViewPanelControl_ImageButton_ExportExcel").click()
+                EC.presence_of_element_located((By.ID, "ctl00_PageContent_MyGridView1"))
+            )
 
+            dropdown_pagination = Select(self.chrome.find_element_by_id(
+                "ctl00_PageContent_GridViewPanelControl_DropDownList_PageSize"))
+            dropdown_pagination.select_by_value("300")
+
+            WebDriverWait(self.chrome, self.page_load_timeout).until(
+                EC.presence_of_element_located((By.ID, "ctl00_PageContent_MyGridView1"))
+            )
+            return self.chrome.find_element_by_id("ctl00_PageContent_MyGridView1")
+
+        def slugify_cmp_name(cmp_name):
+            cmp_name = cmp_name.replace(" ", "")
+            return re.sub(r"\W", "-", cmp_name)
+
+        open_cmps_in_new_tab()
+        table_cmps = set_max_paginate()
+
+        trs = table_cmps.find_elements_by_xpath(".//tr[@align='right']")
+        for num in range(len(trs)):
+            table_cmps = set_max_paginate()
+
+            # Click the num element, sleep for 1s and close
+            tr = table_cmps.find_elements_by_xpath(".//tr[@align='right']")[num]
+            company = tr.find_element_by_tag_name("a")
+            print(f'Loading: "{company.text}" ...')
+            company.click()
+            set_max_paginate()
+
+            self.download_imp_exp_ttype()
+            self.chrome.close()
+
+            # Switch to main window, Open companies in new tab, Navigate to that new tab
+            self.chrome.switch_to.window(main_window)
+            open_cmps_in_new_tab()
+
+    def click_xlsx_icon(self):
+        WebDriverWait(self.chrome, self.page_load_timeout).until(
+            EC.presence_of_element_located((By.ID, "ctl00_PageContent_MyGridView1"))
+        )
+        self.chrome.find_element_by_id("ctl00_PageContent_GridViewPanelControl_ImageButton_ExportExcel").click()
+        self.await_downloads(self.dir_output, self.page_load_timeout)
+
+    def download_imp_exp_ttype(self):
+        # Default trade type is 'import'
+        self.click_xlsx_icon()
+
+        # Change trade type to 'export', and then click xlsx icon.
+        dropdown_trade_type = Select(self.chrome.find_element_by_id("ctl00_NavigationControl_DropDownList_TradeType"))
+        dropdown_trade_type.select_by_value("E")
+        self.click_xlsx_icon()
+
+    def download_xlsx(self):
         target_id = REPORT_TYPES[self.args.type]["target_id"]
 
         if self.args.type in (TRADE_INDICATORS, Q_TIME_SERIES):
             self.chrome.find_element_by_id(target_id).click()
-            click_xlsx_icon()
-
-            dropdown_trade_type = Select(self.chrome.find_element_by_id("ctl00_NavigationControl_DropDownList_TradeType"))
-            dropdown_trade_type.select_by_value("E")
-            click_xlsx_icon()
+            self.download_imp_exp_ttype()
         
         else:
-            pass
+            self.do_download_fa_cmps()
 
     def store(self):
+        log.info(f"Fetching for {self.product_id}:{self.country} - ({self.count})")
         try:
             self.setup()
             self.login()
             self.select_product_id()
             self.select_country()
             self.download_xlsx()
-            self.await_downloads(self.dir_output, self.page_load_timeout)
         except Exception as e:
-            log.error("Error on fetching the data!")
+            log.error("ERROR: Error on fetching the data!")
+            log.error(f"DESC: {type(e)} - {e}")
+            # traceback.print_exc()
         finally:
-            self.chrome.close()
+            self.chrome.quit()
 
 
 class TradeMapManager:
@@ -199,16 +270,20 @@ class TradeMapManager:
         os.makedirs(self.dir_output, exist_ok=True)
 
     def fetch(self):
-        df = pd.read_csv("products.csv")
-        for idx in df.index:
-            product_id, country = str(df.iloc[idx].product_id), df.iloc[idx].country
-            log.info(f"Fetching for {product_id} - {country}")
-            scraper = TradeMapScraper(product_id, country, self.args, self.settings)
+        workers = self.settings["workers"]["value"]
+        count = 0
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = []
+            products = pd.read_csv("products.csv").to_dict('records')
+            for product in products:
+                count += 1
+                future = executor.submit(
+                    TradeMapScraper(count, str(product["product_id"]), product["country"], self.args, self.settings).store
+                )
+                futures.append(future)
+        for future in as_completed(futures):
+            future.result()
 
-            try:
-                scraper.store()
-            except Exception as e:
-                log.error("Error on fetching the data.")
 
 def get_settings():
     with open("settings.json", "r") as f:
