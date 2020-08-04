@@ -149,8 +149,9 @@ class TradeMapScraper:
         dropdown_country = self.chrome.find_element_by_id(target_id)
         WebDriverWait(self.chrome, self.page_load_timeout).until(DropDownLoaded(target_id))
         for element_country in dropdown_country.find_elements_by_xpath(".//*"):
-            if element_country.text.lower() == self.country.lower():
+            if element_country.text.lower().strip() == self.country.lower().strip():
                 element_country.click()
+                break
 
     def await_downloads(self, dir, timeout):
         seconds, dl_wait = 0, True
@@ -251,7 +252,7 @@ class TradeMapScraper:
         except Exception as e:
             log.error("ERROR: Error on fetching the data!")
             log.error(f"DESC: {type(e)} - {e}")
-            # traceback.print_exc()
+            traceback.print_exc()
         finally:
             self.chrome.quit()
 
